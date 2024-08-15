@@ -188,10 +188,22 @@ class SuperPoint(nn.Module):
         # Below this, B > 1 is not supported as each image can have a different number of keypoints.
 
         # Extract keypoints
-        best_kp = torch.where(scores > self.conf["detection_threshold"])
-        scores = scores[best_kp]
+        if isinstance(self.conf["detection_threshold"], float):
+            best_kp = torch.where(scores > self.conf["detection_threshold"])
+        else:        
+            scores_shape = scores.shape
 
+            # Generate all possible indices
+            ranges = [torch.arange(s) for s in scores_shape]
+            grid = torch.meshgrid(*ranges, indexing='ij')
+            all_indices = torch.stack(grid, dim=0)
+
+            # Simulate best_kp similar to torch.where but without any condition
+            best_kp = tuple(all_indices[i].view(-1) for i in range(len(scores_shape)))
+            
+        scores = scores[best_kp]
         keypoints = torch.stack(best_kp[1:3], dim=-1)
+        
         # keypoints.shape == (N, 2)
 
         # scores.shape == (N)

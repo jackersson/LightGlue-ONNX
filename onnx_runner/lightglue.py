@@ -1,5 +1,6 @@
 import numpy as np
 import onnxruntime as ort
+import time
 
 
 class LightGlueRunner:
@@ -12,7 +13,7 @@ class LightGlueRunner:
         self.extractor = (
             ort.InferenceSession(
                 extractor_path,
-                providers=providers,
+                providers=["CUDAExecutionProvider", "CPUExecutionProvider"],
             )
             if extractor_path is not None
             else None
@@ -47,22 +48,32 @@ class LightGlueRunner:
             )
             return m_kpts0, m_kpts1
         else:
+            t = time.perf_counter()
             kpts0, scores0, desc0 = self.extractor.run(None, {"image": image0})
+            print(f"extractor: {(time.perf_counter() - t) * 1000} ms")
+
             kpts1, scores1, desc1 = self.extractor.run(None, {"image": image1})
 
+            kpts0_ = self.normalize_keypoints(
+                        kpts0, image0.shape[2], image0.shape[3]
+                    )
+
+            kpts1_ = self.normalize_keypoints(
+                        kpts1, image1.shape[2], image1.shape[3]
+                    )
+
+            t = time.perf_counter()
             matches0, mscores0 = self.lightglue.run(
                 None,
                 {
-                    "kpts0": self.normalize_keypoints(
-                        kpts0, image0.shape[2], image0.shape[3]
-                    ),
-                    "kpts1": self.normalize_keypoints(
-                        kpts1, image1.shape[2], image1.shape[3]
-                    ),
+                    "kpts0": kpts0_,
+                    "kpts1": kpts1_,
                     "desc0": desc0,
                     "desc1": desc1,
                 },
             )
+            print(f"matcher: {(time.perf_counter() - t) * 1000} ms")
+
             m_kpts0, m_kpts1 = self.post_process(
                 kpts0, kpts1, matches0, scales0, scales1
             )
