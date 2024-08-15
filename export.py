@@ -10,7 +10,7 @@ from lightglue_onnx.utils import load_image, rgb_to_grayscale
 
 
 def export_onnx(
-    img_size: typ.Union[typ.Tuple[int, int], int] =512,
+    img_size: typ.Union[typ.Tuple[int, int], int]=512,
     extractor_type="superpoint",
     extractor_path=None,
     lightglue_path=None,
@@ -19,6 +19,7 @@ def export_onnx(
     dynamic=False,
     max_num_keypoints=None,
     detection_threshold=0.0005,
+    rknn=False,
 ):
     # Handle args
     if isinstance(img_size, Iterable) and len(img_size) == 1:
@@ -33,7 +34,7 @@ def export_onnx(
         # SuperPoint works on grayscale images.
         image0 = rgb_to_grayscale(image0)
         image1 = rgb_to_grayscale(image1)
-        extractor = SuperPoint(max_num_keypoints=max_num_keypoints, detection_threshold=detection_threshold).eval()
+        extractor = SuperPoint(max_num_keypoints=max_num_keypoints, detection_threshold=detection_threshold, rknn=rknn).eval()
         lightglue = LightGlue(extractor_type).eval()
     elif extractor_type == "disk":
         extractor = DISK(max_num_keypoints=max_num_keypoints).eval()
@@ -62,12 +63,16 @@ def export_onnx(
 
     if isinstance(extractor_path, str):
         
+        output_names = ["keypoints", "scores", "descriptors"]
+        if rknn:
+            output_names.remove("keypoints")
+            
         torch.onnx.export(
             extractor,
             image0[None],
             extractor_path,
             input_names=["image"],
-            output_names=["keypoints", "scores", "descriptors"],
+            output_names=output_names,
             opset_version=17,
             do_constant_folding=True,
             # dynamic_axes=dynamic_axes,

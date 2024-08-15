@@ -113,6 +113,7 @@ class SuperPoint(nn.Module):
         "max_num_keypoints": None,
         "detection_threshold": 0.0005,
         "remove_borders": 4,
+        "rknn": False,
     }
 
     def __init__(self, **conf):
@@ -186,28 +187,31 @@ class SuperPoint(nn.Module):
             scores[:, :, -pad:] = -1
 
         # Below this, B > 1 is not supported as each image can have a different number of keypoints.
-
+        
+        # Compute the dense descriptors
+        cDa = self.relu(self.convDa(x))
+        descriptors = self.convDb(cDa)
+        descriptors = torch.nn.functional.normalize(descriptors, p=2, dim=1)
+        
         # Extract keypoints
-        if isinstance(self.conf["detection_threshold"], float):
-            best_kp = torch.where(scores > self.conf["detection_threshold"])
-        else:        
-            scores_shape = scores.shape
+        if self.conf["rknn"]:
+            # flat_indices = torch.arange(scores.numel())
+            # shape = torch.Size((int(scores.shape[1]), int(scores.shape[2])))
+            # kp_y, kp_x = torch.unravel_index(flat_indices, shape)
+            # keypoints = torch.stack((kp_y, kp_x), dim=-1)
+            # # Convert (h, w) to (x, y)
+            # keypoints = torch.flip(keypoints, (1,))
+        
+            return (scores.flatten()[None], descriptors)
+        
+        best_kp = torch.where(scores > self.conf["detection_threshold"])
 
-            # Generate all possible indices
-            ranges = [torch.arange(s) for s in scores_shape]
-            grid = torch.meshgrid(*ranges, indexing='ij')
-            all_indices = torch.stack(grid, dim=0)
-
-            # Simulate best_kp similar to torch.where but without any condition
-            best_kp = tuple(all_indices[i].view(-1) for i in range(len(scores_shape)))
-            
+        # N, 
         scores = scores[best_kp]
+            
+        # N, 2 (h, w)
         keypoints = torch.stack(best_kp[1:3], dim=-1)
         
-        # keypoints.shape == (N, 2)
-
-        # scores.shape == (N)
-
         # Keep the k keypoints with highest score
         if self.conf["max_num_keypoints"] is not None:
             keypoints, scores = top_k_keypoints(
@@ -216,13 +220,6 @@ class SuperPoint(nn.Module):
 
         # Convert (h, w) to (x, y)
         keypoints = torch.flip(keypoints, (1,))
-
-        # keypoints.shape == (N, 2)
-
-        # Compute the dense descriptors
-        cDa = self.relu(self.convDa(x))
-        descriptors = self.convDb(cDa)
-        descriptors = torch.nn.functional.normalize(descriptors, p=2, dim=1)
 
         # Extract descriptors
         descriptors = sample_descriptors(keypoints, descriptors, 8).permute(0, 2, 1)
