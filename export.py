@@ -28,40 +28,33 @@ def export_onnx(
     # Sample images for tracing
     image0, scales0 = load_image(img0_path, resize=img_size)
     image1, scales1 = load_image(img1_path, resize=img_size)
+    
+    image0 = rgb_to_grayscale(image0)
+    image1 = rgb_to_grayscale(image1)
+        
     # Models
     extractor_type = extractor_type.lower()
-    if extractor_type == "superpoint":
-        # SuperPoint works on grayscale images.
-        image0 = rgb_to_grayscale(image0)
-        image1 = rgb_to_grayscale(image1)
-        extractor = SuperPoint(max_num_keypoints=max_num_keypoints, detection_threshold=detection_threshold, rknn=rknn).eval()
-        lightglue = LightGlue(extractor_type).eval()
-    elif extractor_type == "disk":
-        extractor = DISK(max_num_keypoints=max_num_keypoints).eval()
-        lightglue = LightGlue(extractor_type).eval()
-    else:
-        raise NotImplementedError(
-            f"LightGlue has not been trained on {extractor_type} features."
-        )
-    
-    # Export Extractor
-    dynamic_axes = {
-        "keypoints": {1: "num_keypoints"},
-        "scores": {1: "num_keypoints"},
-        "descriptors": {1: "num_keypoints"},
-    }
-    
-    if dynamic:
-        dynamic_axes.update({"image": {2: "height", 3: "width"}})
-    else:
-        print(
-            f"WARNING: Exporting without --dynamic implies that the {extractor_type} extractor's input image size will be locked to {image0.shape[-2:]}"
-        )
-        extractor_path = extractor_path.replace(
-            ".onnx", f"_{image0.shape[-2]}x{image0.shape[-1]}.onnx"
-        )
-
+  
     if isinstance(extractor_path, str):
+        
+        extractor = SuperPoint(max_num_keypoints=max_num_keypoints, detection_threshold=detection_threshold, rknn=rknn).eval()
+        
+        # Export Extractor
+        dynamic_axes = {
+            "keypoints": {1: "num_keypoints"},
+            "scores": {1: "num_keypoints"},
+            "descriptors": {1: "num_keypoints"},
+        }
+        
+        if dynamic:
+            dynamic_axes.update({"image": {2: "height", 3: "width"}})
+        else:
+            print(
+                f"WARNING: Exporting without --dynamic implies that the {extractor_type} extractor's input image size will be locked to {image0.shape[-2:]}"
+            )
+            extractor_path = extractor_path.replace(
+                ".onnx", f"_{image0.shape[-2]}x{image0.shape[-1]}.onnx"
+            )
         
         output_names = ["keypoints", "scores", "descriptors"]
         if rknn:
@@ -81,13 +74,14 @@ def export_onnx(
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     if isinstance(lightglue_path, str):
 
+        lightglue = LightGlue(extractor_type).eval().to(device)
         # Export LightGlue
         # feats0, feats1 = extractor(image0[None]), extractor(image1[None])
         # kpts0, scores0, desc0 = feats0
         # kpts1, scores1, desc1 = feats1
 
         sp_descriptor_size = 256
-        num_keypoints_hq = 2048
+        num_keypoints_hq = 512
         num_keypoints_lq = 512
         num_points = 2 # x, y
         

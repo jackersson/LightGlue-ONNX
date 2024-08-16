@@ -175,17 +175,6 @@ class SuperPoint(nn.Module):
         _, _, h, w = scores.shape
         scores = scores.permute(0, 2, 3, 1).reshape(1, h, w, 8, 8)
         scores = scores.permute(0, 1, 3, 2, 4).reshape(1, h * 8, w * 8)
-        scores = simple_nms(scores, self.conf["nms_radius"])
-
-        # scores.shape == (B, H, W)
-
-        # Discard keypoints near the image borders
-        if pad := self.conf["remove_borders"]:
-            scores[:, :pad] = -1
-            scores[:, :, :pad] = -1
-            scores[:, -pad:] = -1
-            scores[:, :, -pad:] = -1
-
         # Below this, B > 1 is not supported as each image can have a different number of keypoints.
         
         # Compute the dense descriptors
@@ -203,6 +192,18 @@ class SuperPoint(nn.Module):
             # keypoints = torch.flip(keypoints, (1,))
         
             return (scores.flatten()[None], descriptors)
+        
+        scores = simple_nms(scores, self.conf["nms_radius"])
+
+        # scores.shape == (B, H, W)
+
+        # Discard keypoints near the image borders
+        if pad := self.conf["remove_borders"]:
+            scores[:, :pad] = -1
+            scores[:, :, :pad] = -1
+            scores[:, -pad:] = -1
+            scores[:, :, -pad:] = -1
+
         
         best_kp = torch.where(scores > self.conf["detection_threshold"])
 
