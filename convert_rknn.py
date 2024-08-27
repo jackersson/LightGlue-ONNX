@@ -18,7 +18,7 @@ def convert(filename: str):
         print('Load model failed!')
         exit(ret)
     print('done')
-
+    
     # Build model
     print('--> Building model')
     ret = rknn.build(do_quantization=False)

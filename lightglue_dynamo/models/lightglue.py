@@ -171,6 +171,7 @@ class LightGlue(nn.Module):
         filter_threshold: float = 0.1,  # match threshold
         depth_confidence: float = -1,  # -1 is no early stopping, recommend: 0.95
         width_confidence: float = -1,  # -1 is no point pruning, recommend: 0.99
+        rknn: bool = False,
     ) -> None:
         super().__init__()
 
@@ -180,6 +181,7 @@ class LightGlue(nn.Module):
         self.filter_threshold = filter_threshold
         self.depth_confidence = depth_confidence
         self.width_confidence = width_confidence
+        self.rknn = rknn
 
         if input_dim != self.descriptor_dim:
             self.input_proj = nn.Linear(input_dim, self.descriptor_dim, bias=True)
@@ -226,8 +228,11 @@ class LightGlue(nn.Module):
             descriptors = self.transformers[i](descriptors, encodings)
 
         scores = self.log_assignment[i](descriptors)  # (B, N, N)
-        matches, mscores = filter_matches(scores, self.filter_threshold)
-        return matches, mscores  # (M, 3), (M,)
+        if self.rknn:
+            return scores
+        else:
+            matches, mscores = filter_matches(scores, self.filter_threshold)
+            return matches, mscores  # (M, 3), (M,)
 
     def confidence_threshold(self, layer_index: int) -> float:
         """scaled confidence threshold"""

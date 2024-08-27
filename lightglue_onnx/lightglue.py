@@ -239,6 +239,7 @@ class LightGlue(nn.Module):
         "depth_confidence": -1,  # -1 is no early stopping, recommend: 0.95
         "width_confidence": -1,  # -1 is no point pruning, recommend: 0.99
         "weights": None,
+        "rknn": False
     }
 
     version = "v0.1_arxiv"
@@ -318,96 +319,21 @@ class LightGlue(nn.Module):
         encoding0 = self.posenc(kpts0)
         encoding1 = self.posenc(kpts1)
 
-        # GNN + final_proj + assignment
-        do_early_stop = False  # self.conf.depth_confidence > 0
-        do_point_pruning = False  # self.conf.width_confidence > 0
-        if do_point_pruning:
-            ind0 = torch.arange(0, m, device=kpts0.device)[None]
-            ind1 = torch.arange(0, n, device=kpts0.device)[None]
-
         for i in range(self.conf.n_layers):
             # self+cross attention
             desc0, desc1 = self.transformers[i](desc0, desc1, encoding0, encoding1)
             if i == self.conf.n_layers - 1:
                 continue  # no early stopping or adaptive width at last layer
 
-            token0, token1 = None, None
-            if do_early_stop:  # early stopping
-                token0, token1 = self.token_confidence[i](desc0, desc1)
-                if self.check_if_stop(token0[..., :m, :], token1[..., :n, :], i, m + n):
-                    break
-
-            if do_point_pruning:  # point pruning
-                scores0 = self.log_assignment[i].get_matchability(desc0)
-                prunemask0 = self.get_pruning_mask(token0, scores0, i)
-                keep0 = torch.where(prunemask0)[1]
-                ind0 = ind0.index_select(1, keep0)
-                desc0 = desc0.index_select(1, keep0)
-                encoding0 = encoding0.index_select(-2, keep0)
-
-                scores1 = self.log_assignment[i].get_matchability(desc1)
-                prunemask1 = self.get_pruning_mask(token1, scores1, i)
-                keep1 = torch.where(prunemask1)[1]
-                ind1 = ind1.index_select(1, keep1)
-                desc1 = desc1.index_select(1, keep1)
-                encoding1 = encoding1.index_select(-2, keep1)
-
         # desc0, desc1 = desc0[..., :m, :], desc1[..., :n, :]
         scores = self.log_assignment[i](desc0, desc1)
-        matches, mscores = filter_matches(scores, self.conf.filter_threshold)
-        return matches, mscores
-        # Skip unnecessary computation
-        m0, m1, mscores0, mscores1 = filter_matches(scores, self.conf.filter_threshold)
-
-        valid = m0[0] > -1
-        m_indices_0 = torch.where(valid)[0]
-        m_indices_1 = m0[0][valid]
-        if do_point_pruning:
-            m_indices_0 = ind0[0, m_indices_0]
-            m_indices_1 = ind1[0, m_indices_1]
-
-        matches = torch.stack([m_indices_0, m_indices_1], -1)
-        mscores = mscores0[0][valid]
-
-        if do_point_pruning:  # scatter with indices after pruning
-            m0_ = torch.full((b, m), -1, device=m0.device, dtype=m0.dtype)
-            m1_ = torch.full((b, n), -1, device=m1.device, dtype=m1.dtype)
-            m0_[:, ind0] = torch.where(m0 == -1, -1, ind1.gather(1, m0.clamp(min=0)))
-            m1_[:, ind1] = torch.where(m1 == -1, -1, ind0.gather(1, m1.clamp(min=0)))
-            mscores0_ = torch.zeros((b, m), device=mscores0.device)
-            mscores1_ = torch.zeros((b, n), device=mscores1.device)
-            mscores0_[:, ind0] = mscores0
-            mscores1_[:, ind1] = mscores1
-            m0, m1, mscores0, mscores1 = m0_, m1_, mscores0_, mscores1_
-
-        return matches, mscores
+        if not self.conf.rknn:
+            matches, mscores = filter_matches(scores, self.conf.filter_threshold)
+            return matches, mscores
+        mscores = scores
+        return mscores
 
     def confidence_threshold(self, layer_index: int) -> float:
         """scaled confidence threshold"""
         threshold = 0.8 + 0.1 * np.exp(-4.0 * layer_index / self.conf.n_layers)
         return np.clip(threshold, 0, 1)
-
-    def get_pruning_mask(
-        self,
-        confidences: Optional[torch.Tensor],
-        scores: torch.Tensor,
-        layer_index: int,
-    ) -> torch.Tensor:
-        """mask points which should be removed"""
-        keep = scores > (1 - self.conf.width_confidence)
-        if confidences is not None:  # Low-confidence points are never pruned.
-            keep |= confidences <= self.confidence_thresholds[layer_index]
-        return keep
-
-    def check_if_stop(
-        self,
-        confidences0: torch.Tensor,
-        confidences1: torch.Tensor,
-        layer_index: int,
-        num_points: int,
-    ) -> torch.Tensor:
-        """evaluate stopping condition"""
-        confidences = torch.cat([confidences0, confidences1], -1)
-        threshold = self.confidence_thresholds[layer_index]
-        ratio_confident = 1.0 - (confidences < threshold).float().sum() / num_points
-        return ratio_confident > self.conf.depth_confidence

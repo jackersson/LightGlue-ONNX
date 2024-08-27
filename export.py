@@ -1,10 +1,9 @@
-import argparse
 from typing import List
 from collections.abc import Iterable
 import torch
 import fire
 import typing as typ
-from lightglue_onnx import DISK, LightGlue, LightGlueEnd2End, SuperPoint
+from lightglue_onnx import LightGlue, SuperPoint
 from lightglue_onnx.end2end import normalize_keypoints
 from lightglue_onnx.utils import load_image, rgb_to_grayscale
 
@@ -20,6 +19,8 @@ def export_onnx(
     max_num_keypoints=None,
     detection_threshold=0.0005,
     rknn=False,
+    num_keypoints_hq: int = 2048,
+    num_keypoints_lq: int = 512,
 ):
     # Handle args
     if isinstance(img_size, Iterable) and len(img_size) == 1:
@@ -74,15 +75,13 @@ def export_onnx(
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     if isinstance(lightglue_path, str):
 
-        lightglue = LightGlue(extractor_type).eval().to(device)
+        lightglue = LightGlue(extractor_type, rknn=rknn).eval().to(device)
         # Export LightGlue
         # feats0, feats1 = extractor(image0[None]), extractor(image1[None])
         # kpts0, scores0, desc0 = feats0
         # kpts1, scores1, desc1 = feats1
 
         sp_descriptor_size = 256
-        num_keypoints_hq = 512
-        num_keypoints_lq = 512
         num_points = 2 # x, y
         
         kpts1 = torch.zeros(1, num_keypoints_hq, num_points).to(device)
@@ -98,12 +97,16 @@ def export_onnx(
         kpts0 = normalize_keypoints(kpts0, image0.shape[1], image0.shape[2])
         kpts1 = normalize_keypoints(kpts1, image1.shape[1], image1.shape[2])
 
+        output_names = ["matches0", "mscores0"]
+        if rknn:
+            output_names.remove("matches0")
+        
         torch.onnx.export(
             lightglue,
             (kpts0, kpts1, desc0, desc1),
             lightglue_path,
             input_names=["kpts0", "kpts1", "desc0", "desc1"],
-            output_names=["matches0", "mscores0"],
+            output_names=output_names,
             do_constant_folding=True,
             opset_version=17,
             # dynamic_axes={
